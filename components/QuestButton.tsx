@@ -16,7 +16,6 @@ const QuestIcon = findByCodeLazy("\"M7.5 21.7a8.95");
 const { navigateToQuestHome } = findByPropsLazy("navigateToQuestHome");
 const TopBarButton = findComponentByCodeLazy("badgePosition", "icon");
 const SettingsBarButton = findComponentByCodeLazy("keyboardShortcut", "positionKey");
-const CountBadge = findComponentByCodeLazy("renderBadgeCount", "disableColor");
 const supportedTasks = ["WATCH_VIDEO", "PLAY_ON_DESKTOP", "STREAM_ON_DESKTOP", "PLAY_ACTIVITY", "WATCH_VIDEO_ON_MOBILE", "ACHIEVEMENT_IN_ACTIVITY"] as const;
 
 function questsStatus() {

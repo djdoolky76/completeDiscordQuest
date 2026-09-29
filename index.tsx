@@ -24,7 +24,7 @@ let availableQuests: QuestValue[] = [];
 let acceptableQuests: QuestValue[] = [];
 let completableQuests: QuestValue[] = [];
 
-const completingQuest = new Map();
+export const completingQuest = new Map();
 const fakeGames = new Map();
 const fakeApplications = new Map();
 
@@ -163,6 +163,8 @@ function updateQuests() {
         }
     }
     for (const quest of completableQuests) {
+        if (!isQuestEligibleForFarming(quest)) continue;
+
         if (completingQuest.has(quest.id)) {
             if (completingQuest.get(quest.id) === false) {
                 completingQuest.delete(quest.id);

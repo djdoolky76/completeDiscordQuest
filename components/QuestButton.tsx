@@ -9,13 +9,11 @@ import "./QuestButton.css";
 import { Flex } from "@components/Flex";
 import { QuestsStore } from "../stores";
 import { completingQuest } from "../index";
-import { findByPropsLazy, findComponentByCodeLazy } from "@webpack";
-import { Tooltip, useEffect, useState } from "@webpack/common";
+import { findComponentByCodeLazy } from "@webpack";
+import { NavigationRouter, Tooltip, useEffect, useState } from "@webpack/common";
 import { SVGProps } from "react";
 
-const { navigateToQuestHome } = findByPropsLazy("navigateToQuestHome");
-const TopBarButton = findComponentByCodeLazy("badgePosition", "icon");
-const SettingsBarButton = findComponentByCodeLazy("keyboardShortcut", "positionKey");
+const CountBadge = findComponentByCodeLazy("renderBadgeCount", "disableColor");
 const supportedTasks = ["WATCH_VIDEO", "PLAY_ON_DESKTOP", "STREAM_ON_DESKTOP", "PLAY_ACTIVITY", "WATCH_VIDEO_ON_MOBILE", "ACHIEVEMENT_IN_ACTIVITY"] as const;
 
 function QuestIcon({ width = 20, height = 20, ...props }: SVGProps<SVGSVGElement>) {
@@ -28,11 +26,20 @@ function QuestIcon({ width = 20, height = 20, ...props }: SVGProps<SVGSVGElement
             viewBox="0 0 24 24"
             fill="none"
         >
-            <path d="M5 21V4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            <path d="M6 5c3.5-2.5 6 2.25 12-.5v10c-6 2.75-8.5-2-12 .5V5Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-            <path d="m12 7.1.8 1.65 1.82.27-1.31 1.28.31 1.81-1.62-.85-1.62.85.31-1.81-1.31-1.28 1.82-.27L12 7.1Z" fill="currentColor" />
+            <path d="M8.75 4.25A8.15 8.15 0 0 0 4 11.65c0 3.35 2.02 6.23 4.9 7.48" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+            <path d="M15.25 4.25A8.15 8.15 0 0 1 20 11.65c0 3.35-2.02 6.23-4.9 7.48" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+            <path d="m6.3 6.2-2.05-.35.2 2.08M5 10.15l-1.9.85 1.38 1.56M5.25 14.35l-1.2 1.7 1.9.83M17.7 6.2l2.05-.35-.2 2.08M19 10.15l1.9.85-1.38 1.56M18.75 14.35l1.2 1.7-1.9.83" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="m12 6.25 1.58 3.2 3.53.51-2.55 2.49.6 3.51L12 14.3l-3.16 1.66.6-3.51-2.55-2.49 3.53-.51L12 6.25Z" fill="currentColor" />
         </svg>
     );
+}
+
+function openQuestHome() {
+    NavigationRouter.transitionTo("/quest-home");
+}
+
+function formatTime(seconds: number) {
+    return `${Math.floor(seconds / 60)}:${(seconds % 60).toString().padStart(2, "0")}`;
 }
 
 function questsStatus() {
@@ -73,34 +80,6 @@ function questsStatus() {
     return { ...stats, maxRemaining };
 }
 
-function CountBadge({ count, text, color, bg }: { count: number | string, text: string, color: string, bg: string }) {
-    return (
-        <Tooltip text={text}>
-            {({ onMouseEnter, onMouseLeave }) => (
-                <div
-                    onMouseEnter={onMouseEnter}
-                    onMouseLeave={onMouseLeave}
-                    style={{
-                        backgroundColor: bg,
-                        color: color,
-                        fontSize: "12px",
-                        fontWeight: "bold",
-                        padding: "2px 6px",
-                        borderRadius: "16px",
-                        display: "flex",
-                        alignItems: "center",
-                        border: `1px solid ${color}40`,
-                        boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
-                        backdropFilter: "blur(4px)"
-                    }}
-                >
-                    {count}
-                </div>
-            )}
-        </Tooltip>
-    );
-}
-
 export function QuestsCount() {
     const [status, setStatus] = useState(questsStatus());
     const [timeLeft, setTimeLeft] = useState(status.maxRemaining);
@@ -126,26 +105,66 @@ export function QuestsCount() {
     }, []);
 
     return (
-        <Flex flexDirection={"row"} justifyContent={"flex-end"} className={"quest-button-badges"} gap={"4px"} style={{ padding: "0 4px" }}>
+        <Flex flexDirection={"row"} justifyContent={"flex-end"} className={"quest-button-badges"} gap={"5px"}>
             {timeLeft > 0 && (
-                <CountBadge
-                    count={`${Math.floor(timeLeft / 60)}:${(timeLeft % 60).toString().padStart(2, "0")}`}
-                    text="Time Remaining"
-                    color="#00e676"
-                    bg="rgba(0, 230, 118, 0.15)"
-                />
+                <Tooltip text={"Time Remaining"}>
+                    {({ onMouseEnter, onMouseLeave }) => (
+                        <CountBadge
+                            onMouseEnter={onMouseEnter}
+                            onMouseLeave={onMouseLeave}
+                            count={formatTime(timeLeft)}
+                            color={"var(--status-positive)"}
+                        />
+                    )}
+                </Tooltip>
             )}
             {status.enrollable > 0 && (
-                <CountBadge count={status.enrollable} text="Enrollable" color="#ff5252" bg="rgba(255, 82, 82, 0.15)" />
+                <Tooltip text={"Enrollable"}>
+                    {({ onMouseEnter, onMouseLeave }) => (
+                        <CountBadge
+                            onMouseEnter={onMouseEnter}
+                            onMouseLeave={onMouseLeave}
+                            count={status.enrollable}
+                            color={"var(--status-danger)"}
+                        />
+                    )}
+                </Tooltip>
             )}
             {status.enrolled > 0 && (
-                <CountBadge count={status.enrolled} text="Enrolled" color="#ffd740" bg="rgba(255, 215, 64, 0.15)" />
+                <Tooltip text={"Enrolled"}>
+                    {({ onMouseEnter, onMouseLeave }) => (
+                        <CountBadge
+                            onMouseEnter={onMouseEnter}
+                            onMouseLeave={onMouseLeave}
+                            count={status.enrolled}
+                            color={"var(--status-warning)"}
+                        />
+                    )}
+                </Tooltip>
             )}
             {status.claimable > 0 && (
-                <CountBadge count={status.claimable} text="Claimable" color="#69f0ae" bg="rgba(105, 240, 174, 0.15)" />
+                <Tooltip text={"Claimable"}>
+                    {({ onMouseEnter, onMouseLeave }) => (
+                        <CountBadge
+                            onMouseEnter={onMouseEnter}
+                            onMouseLeave={onMouseLeave}
+                            count={status.claimable}
+                            color={"var(--status-positive)"}
+                        />
+                    )}
+                </Tooltip>
             )}
             {status.claimed > 0 && (
-                <CountBadge count={status.claimed} text="Claimed" color="#536dfe" bg="rgba(83, 109, 254, 0.15)" />
+                <Tooltip text={"Claimed"}>
+                    {({ onMouseEnter, onMouseLeave }) => (
+                        <CountBadge
+                            onMouseEnter={onMouseEnter}
+                            onMouseLeave={onMouseLeave}
+                            count={status.claimed}
+                            color={"var(--blurple-50)"}
+                        />
+                    )}
+                </Tooltip>
             )}
         </Flex>
     );
@@ -178,46 +197,25 @@ export function QuestButton({ type }: { type: "top-bar" | "settings-bar"; }) {
     const className = state.enrollable ? "quest-button-enrollable" : state.enrolled ? "quest-button-enrolled" : state.claimable ? "quest-button-claimable" : "";
     let tooltip = state.enrollable ? `${state.enrollable} Enrollable Quests` : state.enrolled ? `${state.enrolled} Enrolled Quests` : state.claimable ? `${state.claimable} Claimable Quests` : "Quests";
     if (timeLeft > 0) {
-        tooltip += ` (${Math.floor(timeLeft / 60)}:${(timeLeft % 60).toString().padStart(2, "0")} left)`;
+        tooltip += ` (${formatTime(timeLeft)} left)`;
     }
-    if (type === "top-bar") {
-        return (
-            <TopBarButton
-                className={className}
-                iconClassName={undefined}
-                disabled={navigateToQuestHome === undefined}
-                showBadge={state.enrollable > 0 || state.enrolled > 0 || state.claimable > 0}
-                badgePosition={"bottom"}
-                icon={QuestIcon}
-                iconSize={20}
-                onClick={navigateToQuestHome}
-                onContextMenu={undefined}
-                tooltip={tooltip}
-                tooltipPosition={"bottom"}
-                hideOnClick={false}
-            />
-        );
-    } else if (type === "settings-bar") {
-        return (
-            <SettingsBarButton
-                tooltipText={tooltip}
-                onContextMenu={undefined}
-                onClick={navigateToQuestHome}
-                disabled={navigateToQuestHome === undefined}
-                icon={undefined}
-                className={"quest-button"}
-            ><TopBarButton
-                className={className}
-                iconClassName={undefined}
-                disabled={navigateToQuestHome === undefined}
-                showBadge={state.enrollable > 0 || state.enrolled > 0 || state.claimable > 0}
-                badgePosition={"bottom"}
-                icon={QuestIcon}
-                iconSize={20}
-                onClick={navigateToQuestHome}
-                onContextMenu={undefined}
-                hideOnClick={false}
-            /></SettingsBarButton>
-        );
-    }
+    const showBadge = state.enrollable > 0 || state.enrolled > 0 || state.claimable > 0;
+
+    return (
+        <Tooltip text={tooltip} position={type === "top-bar" ? "bottom" : "top"}>
+            {({ onMouseEnter, onMouseLeave }) => (
+                <button
+                    type="button"
+                    aria-label="Quests"
+                    className={`quest-button quest-button-${type} ${className}`}
+                    onMouseEnter={onMouseEnter}
+                    onMouseLeave={onMouseLeave}
+                    onClick={openQuestHome}
+                >
+                    <QuestIcon />
+                    {showBadge && <span className="quest-button-status-indicator" />}
+                </button>
+            )}
+        </Tooltip>
+    );
 }

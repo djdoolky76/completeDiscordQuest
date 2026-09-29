@@ -1,15 +1,54 @@
-.quest-button-enrollable>span[class*="iconBadge"] {
+.quest-button {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    color: var(--interactive-normal);
+    background: transparent;
+    cursor: pointer;
+    -webkit-app-region: no-drag;
+}
+
+.quest-button:hover {
+    color: var(--interactive-hover);
+    background: var(--background-modifier-hover);
+}
+
+.quest-button:active {
+    color: var(--interactive-active);
+    background: var(--background-modifier-active);
+}
+
+.quest-button-top-bar {
+    width: 40px;
+    height: 32px;
+    border-radius: 0;
+}
+
+.quest-button-status-indicator {
+    position: absolute;
+    right: 5px;
+    bottom: 3px;
+    width: 8px;
+    height: 8px;
+    border: 2px solid var(--background-base-lowest, var(--background-tertiary));
+    border-radius: 50%;
+}
+
+.quest-button-enrollable>.quest-button-status-indicator {
     background-color: var(--status-danger);
 }
 
-.quest-button-enrolled>span[class*="iconBadge"] {
+.quest-button-enrolled>.quest-button-status-indicator {
     background-color: var(--status-warning);
 }
 
-.quest-button-claimable>span[class*="iconBadge"] {
+.quest-button-claimable>.quest-button-status-indicator {
     background-color: var(--status-positive);
-}
-
-.quest-button svg:has(> [mask^="url(#svg-mask-panel-button)"]) {
-    display: none;
 }

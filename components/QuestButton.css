@@ -9,20 +9,29 @@
     padding: 0;
     border: 0;
     border-radius: 4px;
-    color: var(--interactive-normal);
     background: transparent;
     cursor: pointer;
     -webkit-app-region: no-drag;
 }
 
 .quest-button:hover {
-    color: var(--interactive-hover);
     background: var(--background-modifier-hover);
 }
 
 .quest-button:active {
-    color: var(--interactive-active);
     background: var(--background-modifier-active);
+}
+
+.quest-button-icon {
+    color: var(--interactive-icon-default, var(--interactive-normal));
+}
+
+.quest-button:hover .quest-button-icon {
+    color: var(--interactive-icon-hover, var(--interactive-hover));
+}
+
+.quest-button:active .quest-button-icon {
+    color: var(--interactive-icon-active, var(--interactive-active));
 }
 
 .quest-button-top-bar {

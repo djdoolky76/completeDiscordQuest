@@ -16,7 +16,7 @@ A Vencord(VC) plugin that completes you multiple discord quests in background si
 ## Credits:
 
 - BetterDiscord port based on a [snippet](https://gist.github.com/aamiaa/204cd9d42013ded9faf646fae7f89fbb) made by [aamiaa](https://github.com/aamiaa).
-- Achievement quest (`ACHIEVEMENT_IN_ACTIVITY`) completion logic adapted from [discord-quest-completer](https://github.com/nyxxbit/discord-quest-completer/blob/main/index.tsx) by [nyxxbit](https://github.com/nyxxbit).
+- Achievement quest (`ACHIEVEMENT_IN_ACTIVITY`) completion, current task metadata selection, and account-safe OAuth cleanup logic adapted from [discord-quest-completer](https://github.com/nyxxbit/discord-quest-completer) by [nyxxbit](https://github.com/nyxxbit).
 
 ## Features:
 

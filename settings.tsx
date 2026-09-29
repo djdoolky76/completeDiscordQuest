@@ -8,6 +8,8 @@ import { definePluginSettings } from "@api/Settings";
 import { OptionType } from "@utils/types";
 import { Forms } from "@webpack/common";
 
+import { requestQuestRefresh } from "./hooks";
+
 function AchievementCaution() {
     return (
         <div style={{
@@ -87,7 +89,8 @@ export default definePluginSettings({
     farmAchievement: {
         type: OptionType.BOOLEAN,
         description: "Farm ACHIEVEMENT_IN_ACTIVITY quests automatically (see caution below).",
-        default: false
+        default: false,
+        onChange: requestQuestRefresh,
     },
     farmAchievementCaution: {
         type: OptionType.COMPONENT,

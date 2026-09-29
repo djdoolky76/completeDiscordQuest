@@ -11,6 +11,9 @@ import { findByCodeLazy, findByPropsLazy } from "@webpack";
 import { FluxDispatcher, RestAPI } from "@webpack/common";
 
 import { QuestButton, QuestsCount } from "./components/QuestButton";
+import { setRefreshQuestsHandler } from "./hooks";
+import { cleanupCreatedOAuthGrants } from "./oauthLifecycle";
+import { getQuestTaskProgress, selectQuestTask, SupportedTask } from "./questConfig";
 import settings from "./settings";
 import { ChannelStore, GuildChannelStore, QuestsStore, RunningGameStore, UserStore } from "./stores";
 
@@ -18,15 +21,17 @@ const Native = VencordNative.pluginHelpers.CompleteDiscordQuest as PluginNative<
 
 const QuestApplyAction = findByCodeLazy("type:\"QUESTS_ENROLL_BEGIN\"") as (questId: string, action: QuestAction) => Promise<any>;
 const QuestLocationMap = findByPropsLazy("QUEST_HOME_DESKTOP", "11") as Record<string, any>;
-const supportedTasks = ["WATCH_VIDEO", "PLAY_ON_DESKTOP", "STREAM_ON_DESKTOP", "PLAY_ACTIVITY", "WATCH_VIDEO_ON_MOBILE", "ACHIEVEMENT_IN_ACTIVITY"] as const;
 
 let availableQuests: QuestValue[] = [];
 let acceptableQuests: QuestValue[] = [];
 let completableQuests: QuestValue[] = [];
 
-export const completingQuest = new Map();
+export const completingQuest = new Map<string, SupportedTask | false>();
 const fakeGames = new Map();
 const fakeApplications = new Map();
+const achievementRuns = new Map<string, symbol>();
+const achievementOAuthTails = new Map<string, Promise<void>>();
+const handleQuestStoreChange = () => updateQuests();
 
 export default definePlugin({
     name: "CompleteDiscordQuest",
@@ -78,11 +83,13 @@ export default definePlugin({
         }
     ],
     start: () => {
-        QuestsStore.addChangeListener(updateQuests);
+        setRefreshQuestsHandler(() => updateQuests(true));
+        QuestsStore.addChangeListener(handleQuestStoreChange);
         updateQuests();
     },
     stop: () => {
-        QuestsStore.removeChangeListener(updateQuests);
+        setRefreshQuestsHandler();
+        QuestsStore.removeChangeListener(handleQuestStoreChange);
         stopCompletingAll();
     },
 
@@ -129,18 +136,17 @@ export default definePlugin({
     }
 });
 
-function isQuestEligibleForFarming(quest: QuestValue): boolean {
-    const questConfig = quest.config.taskConfig || quest.config.taskConfigV2;
-    if (!questConfig?.tasks) return false;
+function isTaskFarmingEnabled(taskName: SupportedTask): boolean {
+    return (taskName === "WATCH_VIDEO" && settings.store.farmVideos
+        || taskName === "WATCH_VIDEO_ON_MOBILE" && settings.store.farmVideos
+        || taskName === "PLAY_ON_DESKTOP" && settings.store.farmPlayOnDesktop
+        || taskName === "STREAM_ON_DESKTOP" && settings.store.farmStreamOnDesktop
+        || taskName === "PLAY_ACTIVITY" && settings.store.farmPlayActivity
+        || taskName === "ACHIEVEMENT_IN_ACTIVITY" && settings.store.farmAchievement);
+}
 
-    if (!Object.keys(questConfig.tasks).some(taskName => {
-        return (taskName === "WATCH_VIDEO" && settings.store.farmVideos
-            || taskName === "WATCH_VIDEO_ON_MOBILE" && settings.store.farmVideos
-            || taskName === "PLAY_ON_DESKTOP" && settings.store.farmPlayOnDesktop
-            || taskName === "STREAM_ON_DESKTOP" && settings.store.farmStreamOnDesktop
-            || taskName === "PLAY_ACTIVITY" && settings.store.farmPlayActivity
-            || taskName === "ACHIEVEMENT_IN_ACTIVITY" && settings.store.farmAchievement);
-    })) return false;
+function isQuestEligibleForFarming(quest: QuestValue): boolean {
+    if (!selectQuestTask(quest.config, isTaskFarmingEnabled)) return false;
 
     const rewards = quest.config?.rewardsConfig?.rewards || [];
     if (!Array.isArray(rewards) || rewards.length === 0) return false;
@@ -153,7 +159,7 @@ function isQuestEligibleForFarming(quest: QuestValue): boolean {
     });
 }
 
-function updateQuests() {
+function updateQuests(retryStopped = false) {
     availableQuests = [...QuestsStore.quests.values()];
     acceptableQuests = availableQuests.filter(x => x.userStatus?.enrolledAt == null && new Date(x.config.expiresAt).getTime() > Date.now()) || [];
     completableQuests = availableQuests.filter(x => x.userStatus?.enrolledAt && !x.userStatus?.completedAt && new Date(x.config.expiresAt).getTime() > Date.now()) || [];
@@ -168,6 +174,7 @@ function updateQuests() {
         if (completingQuest.has(quest.id)) {
             if (completingQuest.get(quest.id) === false) {
                 completingQuest.delete(quest.id);
+                if (retryStopped) completeQuest(quest);
             }
         } else {
             completeQuest(quest);
@@ -198,35 +205,56 @@ function stopCompletingAll() {
             completingQuest.set(quest.id, false);
         }
     }
+    achievementRuns.clear();
     console.log("Stopped completing all quests.");
+}
+
+function isAchievementRunActive(questId: string, runToken: symbol): boolean {
+    return achievementRuns.get(questId) === runToken
+        && completingQuest.get(questId) === "ACHIEVEMENT_IN_ACTIVITY";
+}
+
+function finishAchievementRun(questId: string, runToken: symbol) {
+    if (achievementRuns.get(questId) !== runToken) return;
+    achievementRuns.delete(questId);
+    completingQuest.set(questId, false);
+}
+
+async function acquireAchievementOAuthLock(key: string): Promise<() => void> {
+    const previous = achievementOAuthTails.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>(resolve => { release = resolve; });
+    const tail = previous.catch(() => undefined).then(() => current);
+    achievementOAuthTails.set(key, tail);
+
+    await previous.catch(() => undefined);
+    return () => {
+        release();
+        if (achievementOAuthTails.get(key) === tail) achievementOAuthTails.delete(key);
+    };
 }
 
 function completeQuest(quest: QuestValue) {
     const isApp = typeof DiscordNative !== "undefined";
+    const accountId = UserStore.getCurrentUser()?.id ?? null;
     if (!quest) {
         console.log("You don't have any uncompleted quests!");
     } else {
         const pid = Math.floor(Math.random() * 30000) + 1000;
 
         const { questName } = quest.config.messages;
-        const taskConfig = quest.config.taskConfig ?? quest.config.taskConfigV2;
-        if (!taskConfig?.tasks) {
-            console.log("Quest has no task configuration:", questName);
+        const selectedTask = selectQuestTask(quest.config, isTaskFarmingEnabled);
+        if (!selectedTask) {
+            console.log("Quest has no enabled supported task:", questName);
             return;
         }
 
-        const taskName = supportedTasks.find(x => taskConfig.tasks[x] != null);
-        if (!taskName) {
-            console.log("Unknown task type for quest:", questName);
-            return;
-        }
-        const taskData = taskConfig.tasks[taskName];
-        if (!taskData) return;
+        const { taskData, taskName } = selectedTask;
 
-        const applicationId = quest.config.application?.id ?? taskData.applications?.[0]?.id;
-        const applicationName = quest.config.application?.name ?? taskData.applications?.[0]?.name ?? questName;
+        const applicationId = taskData.applications?.[0]?.id ?? quest.config.application?.id;
+        const applicationName = taskData.applications?.[0]?.name ?? quest.config.application?.name ?? questName;
         const secondsNeeded = taskData.target;
-        let secondsDone = quest.userStatus?.progress?.[taskName]?.value ?? 0;
+        let secondsDone = getQuestTaskProgress(quest.userStatus, taskName);
 
         if ((taskName === "PLAY_ON_DESKTOP" || taskName === "STREAM_ON_DESKTOP") && !applicationId) {
             console.error("Quest is missing an application ID:", questName);
@@ -238,7 +266,7 @@ function completeQuest(quest: QuestValue) {
             return;
         }
 
-        completingQuest.set(quest.id, true);
+        completingQuest.set(quest.id, taskName);
 
         console.log(`Completing quest ${questName} (${quest.id}) - ${taskName} for ${secondsNeeded} seconds.`);
 
@@ -397,6 +425,8 @@ function completeQuest(quest: QuestValue) {
                 break;
 
             case "ACHIEVEMENT_IN_ACTIVITY":
+                const achievementRun = Symbol(quest.id);
+                achievementRuns.set(quest.id, achievementRun);
                 const achievementKey = getStreamKey();
                 if (!achievementKey) {
                     console.error("No voice channel found for achievement heartbeat. Trying bypass directly.");
@@ -409,13 +439,22 @@ function completeQuest(quest: QuestValue) {
                     // quests will return 403 and fall through to Phase 2 immediately).
                     if (achievementKey) {
                         const beat = { stream_key: achievementKey, application_id: String(applicationId || ""), terminal: false };
-                        let cur: number = quest.userStatus?.progress?.[taskName]?.value ?? 0;
+                        let cur = getQuestTaskProgress(quest.userStatus, taskName);
                         let failCount = 0;
                         console.log(`[Achievement] Attempting heartbeat for "${questName}" (${cur}/${secondsNeeded})...`);
 
-                        while (cur < secondsNeeded && completingQuest.get(quest.id)) {
+                        while (cur < secondsNeeded
+                            && isAchievementRunActive(quest.id, achievementRun)
+                            && settings.store.farmAchievement
+                            && UserStore.getCurrentUser()?.id === accountId) {
                             try {
                                 const r = await RestAPI.post({ url: `/quests/${quest.id}/heartbeat`, body: beat });
+                                if (!isAchievementRunActive(quest.id, achievementRun)
+                                    || !settings.store.farmAchievement
+                                    || UserStore.getCurrentUser()?.id !== accountId) {
+                                    console.warn(`[Achievement] Heartbeat stopped for "${questName}" because the run was cancelled or the Discord account changed.`);
+                                    break;
+                                }
                                 const newCur: number = r.body?.progress?.[taskName]?.value ?? r.body?.progress?.ACHIEVEMENT_IN_ACTIVITY?.value ?? cur;
                                 if (newCur > cur) {
                                     cur = newCur;
@@ -425,6 +464,9 @@ function completeQuest(quest: QuestValue) {
                                 if (cur >= secondsNeeded) {
                                     try { await RestAPI.post({ url: `/quests/${quest.id}/heartbeat`, body: { ...beat, terminal: true } }); }
                                     catch { /* noop */ }
+                                    if (!isAchievementRunActive(quest.id, achievementRun)
+                                        || !settings.store.farmAchievement
+                                        || UserStore.getCurrentUser()?.id !== accountId) break;
                                     achievementDone = true;
                                     break;
                                 }
@@ -434,47 +476,48 @@ function completeQuest(quest: QuestValue) {
                                     console.warn(`[Achievement] Heartbeat rejected (HTTP ${e.status}). Falling back to bypass.`);
                                     break;
                                 }
-                                if (failCount >= 3) {
+                                if (failCount >= 5) {
                                     console.warn("[Achievement] Too many heartbeat failures. Falling back to bypass.");
                                     break;
                                 }
                             }
-                            await new Promise(resolve => setTimeout(resolve, 20 * 1000));
+                            await new Promise(resolve => setTimeout(resolve, 19000 + Math.random() * 3000));
                         }
                     }
 
                     // Phase 2: If heartbeat didn't finish, try Discord Says OAuth bypass
-                    if (!achievementDone && completingQuest.get(quest.id)) {
+                    if (!achievementDone && isAchievementRunActive(quest.id, achievementRun)) {
                         if (!settings.store.farmAchievement) {
                             console.warn(`[Achievement] OAuth bypass is off in settings; skipping "${questName}". Enable 'Farm Achievement' to allow this.`);
-                            completingQuest.set(quest.id, false);
+                            finishAchievementRun(quest.id, achievementRun);
                             return;
                         }
 
                         const isApp = typeof DiscordNative !== "undefined";
                         if (!isApp) {
                             console.warn(`[Achievement] OAuth bypass requires the desktop app. Cannot complete "${questName}" in browser.`);
-                            completingQuest.set(quest.id, false);
+                            finishAchievementRun(quest.id, achievementRun);
                             return;
                         }
 
                         const appId = String(applicationId || "");
                         if (!appId || !/^\d+$/.test(appId)) {
                             console.error(`[Achievement] No valid application ID for "${questName}". Cannot bypass.`);
-                            completingQuest.set(quest.id, false);
+                            finishAchievementRun(quest.id, achievementRun);
                             return;
                         }
 
                         console.log(`[Achievement] Trying Discord Says OAuth bypass for "${questName}"...`);
-                        achievementDone = await bypassAchievement(quest.id, appId, secondsNeeded);
+                        achievementDone = await bypassAchievement(quest.id, appId, secondsNeeded, accountId, achievementRun);
                     }
 
+                    if (!isAchievementRunActive(quest.id, achievementRun)) return;
                     if (achievementDone) {
                         console.log(`[Achievement] Quest "${questName}" completed!`);
                     } else {
                         console.warn(`[Achievement] Could not complete "${questName}". Both heartbeat and bypass failed.`);
                     }
-                    completingQuest.set(quest.id, false);
+                    finishAchievementRun(quest.id, achievementRun);
                 };
                 completeAchievement();
                 break;
@@ -525,22 +568,59 @@ function getStreamKey(): string | null {
  *   5) POST {appId}.discordsays.com/.proxy/acf/quest/progress {progress: target}
  *   6) Revoke only the grant we created
  */
-async function bypassAchievement(questId: string, appId: string, target: number): Promise<boolean> {
-    // Snapshot grants before authorizing so cleanup only revokes what we create
-    let preGrantIds: Set<string> | undefined;
-    try {
-        const before: any = await RestAPI.get({ url: "/oauth2/tokens" });
-        preGrantIds = new Set(
-            (before?.body || []).filter((tk: any) => tk.application?.id === appId).map((tk: any) => tk.id)
-        );
-    } catch (e: any) {
-        console.warn("[Achievement] Couldn't snapshot existing grants; aborting:", e?.message);
+async function bypassAchievement(questId: string, appId: string, target: number, accountId: string | null, runToken: symbol): Promise<boolean> {
+    if (!accountId) {
+        console.warn("[Achievement] Discord account identity is unavailable; refusing to create an OAuth grant.");
         return false;
     }
 
+    const getCurrentAccountId = () => UserStore.getCurrentUser()?.id ?? null;
+    const hasConfirmedOwner = (stage: string): boolean => {
+        const currentAccountId = getCurrentAccountId();
+        if (currentAccountId === accountId) return true;
+
+        const reason = currentAccountId == null ? "account identity is unavailable" : "the Discord account changed";
+        console.warn(`[Achievement] ${reason} ${stage}; stopping the OAuth flow.`);
+        return false;
+    };
+    const canContinue = (stage: string): boolean => {
+        if (!isAchievementRunActive(questId, runToken)) {
+            console.warn(`[Achievement] Quest completion stopped ${stage}; cancelling the OAuth flow.`);
+            return false;
+        }
+        if (!settings.store.farmAchievement) {
+            console.warn(`[Achievement] Achievement farming was disabled ${stage}; cancelling the OAuth flow.`);
+            return false;
+        }
+        return hasConfirmedOwner(stage);
+    };
+
+    if (!canContinue("before waiting for the OAuth lock")) return false;
+
+    // Serialize flows for the same account and app so an older run cannot revoke
+    // a grant created by a newer run while cleaning up its snapshot.
+    const releaseOAuthLock = await acquireAchievementOAuthLock(`${accountId}:${appId}`);
+    let preGrantIds: Set<string> | undefined;
+    let authorizationStarted = false;
     try {
+        if (!canContinue("after waiting for the OAuth lock")) return false;
+
+        // Snapshot grants before authorizing so cleanup only revokes what we create
+        try {
+            const before: any = await RestAPI.get({ url: "/oauth2/tokens" });
+            if (!canContinue("after the grant snapshot")) return false;
+            preGrantIds = new Set(
+                (before?.body || []).filter((tk: any) => tk.application?.id === appId).map((tk: any) => tk.id)
+            );
+        } catch (e: any) {
+            console.warn("[Achievement] Couldn't snapshot existing grants; aborting:", e?.message);
+            return false;
+        }
+
+        if (!canContinue("before authorization")) return false;
+
         // Step 1: Authorize the quest app
-        const authRes: any = await RestAPI.post({
+        const authorization = RestAPI.post({
             url: "/oauth2/authorize",
             query: {
                 response_type: "code",
@@ -554,6 +634,9 @@ async function bypassAchievement(questId: string, appId: string, target: number)
                 location_context: { guild_id: "10000", channel_id: "10000", channel_type: 10000 }
             }
         });
+        authorizationStarted = true;
+        const authRes: any = await authorization;
+        if (!canContinue("after authorization")) return false;
         const location: string | undefined = authRes?.body?.location;
         if (!location) throw new Error("no location in /oauth2/authorize response");
         const authCode = new URL(location).searchParams.get("code");
@@ -561,6 +644,7 @@ async function bypassAchievement(questId: string, appId: string, target: number)
 
         // Step 2: Get proxy ticket
         const ticketRes: any = await RestAPI.post({ url: `/applications/${appId}/proxy-tickets`, body: {} });
+        if (!canContinue("after the proxy ticket request")) return false;
         const proxyTicket: string | undefined = ticketRes?.body?.ticket;
         if (!proxyTicket) throw new Error("no proxy ticket");
 
@@ -568,7 +652,12 @@ async function bypassAchievement(questId: string, appId: string, target: number)
 
         // Step 3: Authorize with Discord Says (via native IPC to bypass CSP)
         const dsAuthRes = await Native.discordsaysAuthorize({ appId, questId, authCode, referrer });
-        if (!dsAuthRes.ok) throw new Error(`discordsays authorize ${dsAuthRes.status}`);
+        if (!canContinue("after Discord Says authorization")) return false;
+        if (!dsAuthRes.ok) {
+            const error: any = new Error(`discordsays authorize ${dsAuthRes.status}`);
+            error.status = dsAuthRes.status;
+            throw error;
+        }
         let dsToken: string | undefined;
         try { dsToken = (JSON.parse(dsAuthRes.body) as { token?: string }).token; }
         catch { throw new Error("discordsays returned non-JSON: " + String(dsAuthRes.body).slice(0, 120)); }
@@ -576,12 +665,17 @@ async function bypassAchievement(questId: string, appId: string, target: number)
 
         // Step 4: Report progress
         const progRes = await Native.discordsaysProgress({ appId, questId, token: dsToken, target, referrer });
-        if (!progRes.ok) throw new Error(`discordsays progress ${progRes.status}`);
+        if (!canContinue("after reporting achievement progress")) return false;
+        if (!progRes.ok) {
+            const error: any = new Error(`discordsays progress ${progRes.status}`);
+            error.status = progRes.status;
+            throw error;
+        }
 
         console.log(`[Achievement] OAuth bypass succeeded for quest ${questId}.`);
         return true;
     } catch (e: any) {
-        const code = e?.body?.code;
+        const code = e?.body?.code ?? e?.code;
         if (code === 50165) {
             console.warn("[Achievement] Activity is age-gated or delisted. Discord blocks the proxy ticket.");
             return false;
@@ -589,19 +683,29 @@ async function bypassAchievement(questId: string, appId: string, target: number)
         console.error("[Achievement] OAuth bypass failed:", e?.message ?? e);
         return false;
     } finally {
-        // Cleanup: revoke only the grant we created
-        if (preGrantIds) {
+        // Cleanup: revoke only the grant we created, and never touch a different account.
+        if (preGrantIds && authorizationStarted) {
             try {
-                const after: any = await RestAPI.get({ url: "/oauth2/tokens" });
-                const ours = (after?.body || []).filter(
-                    (tk: any) => tk.application?.id === appId && !preGrantIds!.has(tk.id)
-                );
-                for (const g of ours) {
-                    await RestAPI.del({ url: `/oauth2/tokens/${g.id}` });
+                const cleanup = await cleanupCreatedOAuthGrants({
+                    accountId,
+                    appId,
+                    preGrantIds,
+                    getCurrentAccountId,
+                    listGrants: async () => {
+                        const after: any = await RestAPI.get({ url: "/oauth2/tokens" });
+                        return after?.body || [];
+                    },
+                    deleteGrant: async id => {
+                        await RestAPI.del({ url: `/oauth2/tokens/${id}` });
+                    },
+                });
+                if (cleanup.status !== "cleaned") {
+                    console.warn(`[Achievement] OAuth cleanup stopped because ${cleanup.status === "account-changed" ? "the Discord account changed" : "account identity became unavailable"}.`);
                 }
             } catch (e: any) {
                 console.warn("[Achievement] Deauthorize cleanup failed (non-fatal):", e?.message);
             }
         }
+        releaseOAuthLock();
     }
 }

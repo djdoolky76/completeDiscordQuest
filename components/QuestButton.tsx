@@ -13,8 +13,9 @@ import { findComponentByCodeLazy } from "@webpack";
 import { NavigationRouter, Tooltip, useEffect, useState } from "@webpack/common";
 import { SVGProps } from "react";
 
+import { getQuestTaskProgress, selectQuestTask } from "../questConfig";
+
 const CountBadge = findComponentByCodeLazy("renderBadgeCount", "disableColor");
-const supportedTasks = ["WATCH_VIDEO", "PLAY_ON_DESKTOP", "STREAM_ON_DESKTOP", "PLAY_ACTIVITY", "WATCH_VIDEO_ON_MOBILE", "ACHIEVEMENT_IN_ACTIVITY"] as const;
 
 function QuestIcon({ width = 20, height = 20, ...props }: SVGProps<SVGSVGElement>) {
     return (
@@ -52,20 +53,15 @@ function questsStatus() {
         } else if (x.userStatus?.enrolledAt) {
             acc.enrolled++;
 
-            if (completingQuest.get(x.id)) {
-                const taskConfig = x.config.taskConfig ?? x.config.taskConfigV2;
-                if (taskConfig?.tasks) {
-                    const taskName = supportedTasks.find(t => taskConfig.tasks[t] != null);
-                    if (taskName) {
-                        const taskData = taskConfig.tasks[taskName as keyof typeof taskConfig.tasks];
-                        if (taskData) {
-                            const { target } = taskData;
-                            const progress = x.userStatus?.progress?.[taskName]?.value ?? 0;
-                            const remaining = Math.max(0, Math.floor(target - progress));
-                            if (remaining > maxRemaining) {
-                                maxRemaining = remaining;
-                            }
-                        }
+            const activeTask = completingQuest.get(x.id);
+            if (activeTask) {
+                const selectedTask = selectQuestTask(x.config, taskName => taskName === activeTask);
+                if (selectedTask) {
+                    const { taskData, taskName } = selectedTask;
+                    const progress = getQuestTaskProgress(x.userStatus, taskName);
+                    const remaining = Math.max(0, Math.floor(taskData.target - progress));
+                    if (remaining > maxRemaining) {
+                        maxRemaining = remaining;
                     }
                 }
             }
@@ -209,7 +205,7 @@ export function QuestButton({ type }: { type: "top-bar" | "settings-bar"; }) {
                     onMouseLeave={onMouseLeave}
                     onClick={openQuestHome}
                 >
-                    <QuestIcon />
+                    <QuestIcon className="quest-button-icon" />
                     {showBadge && <span className="quest-button-status-indicator" />}
                 </button>
             )}

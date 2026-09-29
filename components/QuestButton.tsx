@@ -37,7 +37,8 @@ function openQuestHome() {
 }
 
 function formatTime(seconds: number) {
-    return `${Math.floor(seconds / 60)}:${(seconds % 60).toString().padStart(2, "0")}`;
+    const safeSeconds = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
+    return `${Math.floor(safeSeconds / 60)}:${(safeSeconds % 60).toString().padStart(2, "0")}`;
 }
 
 function questsStatus() {
@@ -58,10 +59,13 @@ function questsStatus() {
                 const selectedTask = selectQuestTask(x.config, taskName => taskName === activeTask);
                 if (selectedTask) {
                     const { taskData, taskName } = selectedTask;
-                    const progress = getQuestTaskProgress(x.userStatus, taskName);
-                    const remaining = Math.max(0, Math.floor(taskData.target - progress));
-                    if (remaining > maxRemaining) {
-                        maxRemaining = remaining;
+                    const target = Number(taskData.target);
+                    const progress = Number(getQuestTaskProgress(x.userStatus, taskName));
+                    if (Number.isFinite(target) && Number.isFinite(progress)) {
+                        const remaining = Math.max(0, Math.floor(target - progress));
+                        if (remaining > maxRemaining) {
+                            maxRemaining = remaining;
+                        }
                     }
                 }
             }
@@ -102,12 +106,15 @@ export function QuestsCount() {
             {timeLeft > 0 && (
                 <Tooltip text={"Time Remaining"}>
                     {({ onMouseEnter, onMouseLeave }) => (
-                        <CountBadge
+                        <span
+                            className="quest-button-timer-badge"
+                            role="timer"
+                            aria-label={`Time remaining ${formatTime(timeLeft)}`}
                             onMouseEnter={onMouseEnter}
                             onMouseLeave={onMouseLeave}
-                            count={formatTime(timeLeft)}
-                            color={"var(--status-positive)"}
-                        />
+                        >
+                            {formatTime(timeLeft)}
+                        </span>
                     )}
                 </Tooltip>
             )}

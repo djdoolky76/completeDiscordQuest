@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import ErrorBoundary from "@components/ErrorBoundary";
 import { Devs } from "@utils/constants";
 import definePlugin from "@utils/types";
 import { PluginNative } from "@utils/types";
@@ -40,10 +41,10 @@ export default definePlugin({
     settings,
     patches: [
         {
-            find: ".PlatformTypes.WEB",
+            find: '?"BACK_FORWARD_NAVIGATION":',
             replacement: {
-                match: /(\((\i)\){)(let{leading)/,
-                replace: "$1$2?.trailing?.props?.children?.unshift($self.renderQuestButtonTopBar());$3"
+                match: /(trailing:.{0,120}?\{children:\[)/,
+                replace: "$1$self.renderQuestButtonTopBar(),"
             }
         },
         {
@@ -93,11 +94,12 @@ export default definePlugin({
         stopCompletingAll();
     },
 
-    renderQuestButtonTopBar() {
+    renderQuestButtonTopBar: ErrorBoundary.wrap(() => {
         if (settings.store.showQuestsButtonTopBar) {
             return <QuestButton type="top-bar" />;
         }
-    },
+        return null;
+    }, { noop: true }),
 
     renderQuestButtonSettingsBar() {
         if (settings.store.showQuestsButtonSettingsBar) {

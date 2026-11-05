@@ -32,6 +32,8 @@ const fakeGames = new Map();
 const fakeApplications = new Map();
 const achievementRuns = new Map<string, symbol>();
 const achievementOAuthTails = new Map<string, Promise<void>>();
+const achievementRetryAfter = new Map<string, number>();
+const ACHIEVEMENT_RETRY_DELAY_MS = 10 * 60 * 1000;
 const handleQuestStoreChange = () => updateQuests();
 
 export default definePlugin({
@@ -172,6 +174,7 @@ function updateQuests(retryStopped = false) {
     }
     for (const quest of completableQuests) {
         if (!isQuestEligibleForFarming(quest)) continue;
+        if (!retryStopped && (achievementRetryAfter.get(quest.id) ?? 0) > Date.now()) continue;
 
         if (completingQuest.has(quest.id)) {
             if (completingQuest.get(quest.id) === false) {
@@ -219,6 +222,7 @@ function isAchievementRunActive(questId: string, runToken: symbol): boolean {
 function finishAchievementRun(questId: string, runToken: symbol) {
     if (achievementRuns.get(questId) !== runToken) return;
     achievementRuns.delete(questId);
+    achievementRetryAfter.set(questId, Date.now() + ACHIEVEMENT_RETRY_DELAY_MS);
     completingQuest.set(questId, false);
 }
 
@@ -627,7 +631,7 @@ async function bypassAchievement(questId: string, appId: string, target: number,
             query: {
                 response_type: "code",
                 client_id: appId,
-                scope: "identify applications.commands applications.entitlements"
+                scope: appId === "1549339406907740270" ? "identify" : "identify applications.commands applications.entitlements"
             },
             body: {
                 permissions: "0",
@@ -672,6 +676,9 @@ async function bypassAchievement(questId: string, appId: string, target: number,
             const error: any = new Error(`discordsays progress ${progRes.status}`);
             error.status = progRes.status;
             throw error;
+        }
+        if (appId === "1549339406907740270" && JSON.parse(progRes.body)?.status !== "ok") {
+            throw new Error("discordsays progress did not confirm completion");
         }
 
         console.log(`[Achievement] OAuth bypass succeeded for quest ${questId}.`);

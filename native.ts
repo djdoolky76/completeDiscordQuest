@@ -14,6 +14,18 @@ import { IpcMainInvokeEvent } from "electron";
  */
 
 const NUMERIC_ID = /^\d+$/;
+const ENGAGE_APP_ID = "1549339406907740270";
+
+function activityHeaders(appId: string): Record<string, string> {
+    if (appId !== ENGAGE_APP_ID) return {};
+
+    return {
+        "X-Universe-ID": "2b3d4f19-0c05-4d3a-ad97-8ad1f705499a",
+        "X-Discord-Activity-Id": appId,
+        "X-Discord-Hostname": `${appId}.discordsays.com`,
+        "X-Arise-Client": "engage-prod-main-259d80d"
+    };
+}
 
 function validParams(appId: string, questId: string, referrer: string): boolean {
     if (!NUMERIC_ID.test(String(appId)) || !NUMERIC_ID.test(String(questId))) return false;
@@ -66,9 +78,12 @@ export async function discordsaysAuthorize(
             "Content-Type": "application/json",
             "X-Auth-Token": "",
             "X-Discord-Quest-ID": opts.questId,
+            ...activityHeaders(opts.appId),
             Referer: opts.referrer
         },
-        JSON.stringify({ code: opts.authCode })
+        JSON.stringify(opts.appId === ENGAGE_APP_ID
+            ? { code: opts.authCode, activityId: opts.appId }
+            : { code: opts.authCode })
     );
 }
 
@@ -83,8 +98,11 @@ export async function discordsaysProgress(
             "Content-Type": "application/json",
             "X-Auth-Token": opts.token,
             "X-Discord-Quest-ID": opts.questId,
+            ...activityHeaders(opts.appId),
             Referer: opts.referrer
         },
-        JSON.stringify({ progress: opts.target })
+        JSON.stringify(opts.appId === ENGAGE_APP_ID
+            ? { progress: opts.target, quest_id: opts.questId }
+            : { progress: opts.target })
     );
 }

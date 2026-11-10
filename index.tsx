@@ -40,6 +40,7 @@ export default definePlugin({
     name: "CompleteDiscordQuest",
     description: "A plugin that completes multiple discord quests in background simultaneously.",
     authors: [Devs.nicola02nb, Devs.syntt, Devs.djdoolky76],
+    tags: ["Activity", "Shortcuts", "Utility"],
     settings,
     patches: [
         {
